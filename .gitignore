@@ -1,0 +1,7 @@
+# Rox patches
+*.rpt
+
+# Build objects
+*.o
+*.a
+/rox*
