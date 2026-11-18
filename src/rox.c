@@ -260,9 +260,7 @@ static int branch(const char *name, int remove)
             }
 
             printf("%c %s  %s\n",
-                   !strcmp(current_ref, "refs/heads/main") &&
-                   !strcmp(e->d_name, "main") ? '*' :
-                   (strstr(current_ref, e->d_name) != NULL ? '*' : ' '),
+                   !strcmp(current_ref, path + strlen(META) + 1) ? '*' : ' ',
                    e->d_name, id);
         }
 
