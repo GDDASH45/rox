@@ -116,7 +116,7 @@ static int repo(void)
     return exists(META "/HEAD") && exists(META "/commits");
 }
 
-static void head(char *b, size_t n)
+static void head_ref(char *b, size_t n)
 {
     FILE *f = fopen(META "/HEAD", "r");
 
@@ -130,6 +130,198 @@ static void head(char *b, size_t n)
 
     fclose(f);
     b[strcspn(b, "\r\n")] = 0;
+}
+
+static void head(char *b, size_t n)
+{
+    char ref[P];
+    head_ref(ref, sizeof ref);
+
+    if (!ref[0]) {
+        *b = 0;
+        return;
+    }
+
+    if (strncmp(ref, "refs/heads/", 11) != 0) {
+        snprintf(b, n, "%s", ref);
+        return;
+    }
+
+    char path[P];
+    snprintf(path, sizeof path, META "/%s", ref);
+    FILE *f = fopen(path, "r");
+
+    if (!f) {
+        *b = 0;
+        return;
+    }
+
+    if (!fgets(b, (int)n, f))
+        *b = 0;
+
+    fclose(f);
+    b[strcspn(b, "\r\n")] = 0;
+}
+
+static int valid_branch(const char *name)
+{
+    if (!name || !*name || name[0] == '-' ||
+        strstr(name, "..") || strchr(name, '/') ||
+        name[strlen(name) - 1] == '.')
+        return 0;
+
+    for (const unsigned char *p = (const unsigned char *)name; *p; p++)
+        if (!( (*p >= 'a' && *p <= 'z') ||
+               (*p >= 'A' && *p <= 'Z') ||
+               (*p >= '0' && *p <= '9') ||
+               *p == '-' || *p == '_' || *p == '.'))
+            return 0;
+
+    return 1;
+}
+
+static int write_head(const char *commit_id)
+{
+    char ref[P], path[P];
+    head_ref(ref, sizeof ref);
+
+    if (strncmp(ref, "refs/heads/", 11) != 0)
+        snprintf(ref, sizeof ref, "refs/heads/main");
+
+    snprintf(path, sizeof path, META "/%s", ref);
+
+    if (mkdirs(META "/refs/heads"))
+        return -1;
+
+    FILE *f = fopen(path, "w");
+    if (!f)
+        return -1;
+
+    fprintf(f, "%s\n", commit_id);
+    fclose(f);
+
+    FILE *h = fopen(META "/HEAD", "w");
+    if (!h)
+        return -1;
+
+    fprintf(h, "%s\n", ref);
+    fclose(h);
+    return 0;
+}
+
+static int branch(const char *name, int remove)
+{
+    char current[P], current_ref[P], path[P];
+    head(current, sizeof current);
+    head_ref(current_ref, sizeof current_ref);
+
+    if (strncmp(current_ref, "refs/heads/", 11) != 0) {
+        if (mkdirs(META "/refs/heads"))
+            die("rox: refs");
+
+        snprintf(path, sizeof path, META "/refs/heads/main");
+        FILE *legacy = fopen(path, "w");
+        if (!legacy)
+            die("rox: main branch");
+
+        fprintf(legacy, "%s\n", current);
+        fclose(legacy);
+
+        FILE *h = fopen(META "/HEAD", "w");
+        if (!h)
+            die("rox: HEAD");
+
+        fputs("refs/heads/main\n", h);
+        fclose(h);
+        strcpy(current_ref, "refs/heads/main");
+    }
+
+    if (!name) {
+        DIR *d = opendir(META "/refs/heads");
+        struct dirent *e;
+        if (!d)
+            die("rox: branches");
+
+        while ((e = readdir(d))) {
+            if (e->d_name[0] == '.')
+                continue;
+
+            snprintf(path, sizeof path, META "/refs/heads/%s", e->d_name);
+            FILE *f = fopen(path, "r");
+            char id[128] = "(unborn)";
+            if (f) {
+                if (!fgets(id, sizeof id, f))
+                    strcpy(id, "(unborn)");
+                fclose(f);
+                id[strcspn(id, "\r\n")] = 0;
+                if (!*id)
+                    strcpy(id, "(unborn)");
+            }
+
+            printf("%c %s  %s\n",
+                   !strcmp(current_ref, path + strlen(META) + 1) ? '*' : ' ',
+                   e->d_name, id);
+        }
+
+        closedir(d);
+        return 0;
+    }
+
+    if (!valid_branch(name)) {
+        fprintf(stderr, "rox: invalid branch name: %s\n", name);
+        return 1;
+    }
+
+    if (!strcmp(name, "main") && !strcmp(current_ref, "refs/heads/main") && remove) {
+        fprintf(stderr, "rox: cannot delete the current branch\n");
+        return 1;
+    }
+
+    if (strchr(name, '/')) {
+        char parent[P];
+        snprintf(parent, sizeof parent, META "/refs/heads/%s", name);
+        char *slash = strrchr(parent, '/');
+        if (slash) {
+            *slash = 0;
+            if (mkdirs(parent))
+                die("rox: branch directory");
+        }
+    }
+
+    snprintf(path, sizeof path, META "/refs/heads/%s", name);
+
+    if (remove) {
+        char current_path[P];
+        snprintf(current_path, sizeof current_path, "refs/heads/%s", name);
+        if (!strcmp(current_ref, current_path)) {
+            fprintf(stderr, "rox: cannot delete the current branch\n");
+            return 1;
+        }
+
+        if (unlink(path)) {
+            perror("rox: delete branch");
+            return 1;
+        }
+
+        printf("Deleted branch %s.\n", name);
+        return 0;
+    }
+
+    if (exists(path)) {
+        fprintf(stderr, "rox: branch already exists: %s\n", name);
+        return 1;
+    }
+
+    FILE *f = fopen(path, "w");
+    if (!f)
+        die("rox: create branch");
+
+    fprintf(f, "%s\n", current);
+    fclose(f);
+
+    printf("Created branch %s at %s.\n",
+           name, current[0] ? current : "(no commits)");
+    return 0;
 }
 
 static int listed(const char *p)
@@ -196,12 +388,20 @@ static int init(void)
         return 1;
     }
 
-    if (mkdirs(META "/commits") || mkdirs(META "/stage"))
+    if (mkdirs(META "/commits") || mkdirs(META "/stage") ||
+        mkdirs(META "/refs/heads"))
         die("rox: init");
 
     FILE *f = fopen(META "/HEAD", "w");
     if (!f)
         die("rox: HEAD");
+    fputs("refs/heads/main\n", f);
+    fclose(f);
+
+    f = fopen(META "/refs/heads/main", "w");
+    if (!f)
+        die("rox: main branch");
+    fputs("\n", f);
     fclose(f);
 
     f = fopen(META "/index", "w");
@@ -320,13 +520,10 @@ static int commit(const char *msg)
     fprintf(f, "%s\n", h);
     fclose(f);
 
-    f = fopen(META "/HEAD", "w");
-
-    if (!f)
-        die("rox: HEAD");
-
-    fprintf(f, "%06d\n", id);
-    fclose(f);
+    char new_id[32];
+    snprintf(new_id, sizeof new_id, "%06d", id);
+    if (write_head(new_id))
+        die("rox: update branch");
 
     f = fopen(META "/index", "w");
 
@@ -346,9 +543,14 @@ static int status(void)
         return 1;
     }
 
-    char h[128];
+    char h[128], ref[P];
     head(h, sizeof h);
+    head_ref(ref, sizeof ref);
 
+    const char *branch_name = !strncmp(ref, "refs/heads/", 11)
+        ? ref + 11 : "(detached)";
+
+    printf("On branch %s\n", branch_name);
     printf("HEAD: %s\n", h[0] ? h : "(no commits)");
 
     FILE *f = fopen(META "/index", "r");
@@ -874,6 +1076,8 @@ static void usage(void)
         "rox commit -m <message>\n"
         "rox status\n"
         "rox log\n"
+        "rox branch [name]\n"
+        "rox branch -d <name>\n"
         "rox diff\n"
         "rox apply <patch.rpt>"
     );
@@ -916,6 +1120,22 @@ int main(int argc, char **argv)
 
     if (!strcmp(argv[1], "log"))
         return logbook();
+
+    if (!strcmp(argv[1], "branch")) {
+        if (!repo())
+            return fprintf(stderr, "rox: not a repository\\n"), 1;
+
+        if (argc == 2)
+            return branch(NULL, 0);
+
+        if (argc == 3)
+            return branch(argv[2], 0);
+
+        if (argc == 4 && !strcmp(argv[2], "-d"))
+            return branch(argv[3], 1);
+
+        return fprintf(stderr, "rox: use branch [name] or branch -d <name>\\n"), 1;
+    }
 
     if (!strcmp(argv[1], "diff"))
         return diff();
