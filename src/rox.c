@@ -166,8 +166,7 @@ static void head(char *b, size_t n)
 static int valid_branch(const char *name)
 {
     if (!name || !*name || name[0] == '-' ||
-        strstr(name, "..") || strstr(name, "//") ||
-        name[strlen(name) - 1] == '/' ||
+        strstr(name, "..") || strchr(name, '/') ||
         name[strlen(name) - 1] == '.')
         return 0;
 
@@ -175,7 +174,7 @@ static int valid_branch(const char *name)
         if (!( (*p >= 'a' && *p <= 'z') ||
                (*p >= 'A' && *p <= 'Z') ||
                (*p >= '0' && *p <= '9') ||
-               *p == '-' || *p == '_' || *p == '/' || *p == '.'))
+               *p == '-' || *p == '_' || *p == '.'))
             return 0;
 
     return 1;
@@ -292,7 +291,9 @@ static int branch(const char *name, int remove)
     snprintf(path, sizeof path, META "/refs/heads/%s", name);
 
     if (remove) {
-        if (!strcmp(current_ref, "refs/heads/main") && !strcmp(name, "main")) {
+        char current_path[P];
+        snprintf(current_path, sizeof current_path, "refs/heads/%s", name);
+        if (!strcmp(current_ref, current_path)) {
             fprintf(stderr, "rox: cannot delete the current branch\n");
             return 1;
         }
