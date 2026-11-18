@@ -24,11 +24,28 @@ rox add path/to/file.c
 rox commit -m "Initial snapshot"
 rox status
 rox log
+rox branch
+rox branch feature-name
+rox branch -d feature-name
 rox diff > changes.rpt
 rox apply changes.rpt
 ```
 
 ROX has no remote, push, pull, or network commands.
+
+## Branches
+
+ROX stores branches as references to commit IDs. The current branch is recorded in `.rox/HEAD`, while branch tips live in `.rox/refs/heads/`.
+
+```sh
+rox branch                 # list branches
+rox branch feature-name    # create a branch at the current commit
+rox branch -d feature-name # delete a branch
+```
+
+Branch names currently use letters, numbers, dots, underscores, and hyphens. ROX protects the currently checked-out branch from deletion. Branch creation does not switch the working tree; branch switching and merging are planned separately.
+
+Older repositories whose `.rox/HEAD` contains a commit ID are upgraded to the `main` branch reference the first time `rox branch` is used.
 
 ## Repository layout
 
@@ -37,6 +54,9 @@ ROX has no remote, push, pull, or network commands.
   HEAD
   config
   index
+  refs/
+    heads/
+      main
   stage/
   commits/
     000001/
@@ -68,4 +88,4 @@ M+replacement wording
 
 ## Initial implementation limitations
 
-This first version stages explicitly named regular files. Directory-wide staging, tracked-file deletion, binary patches, rename detection, and advanced diff alignment are not implemented yet.
+This version stages explicitly named regular files. Directory-wide staging, tracked-file deletion, binary patches, rename detection, branch switching, merging, and advanced diff alignment are not implemented yet.
