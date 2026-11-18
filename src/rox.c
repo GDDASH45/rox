@@ -614,10 +614,10 @@ static int parse_header(
     return 0;
 }
 
+
 static int apply(const char *name)
 {
     FILE *f = fopen(name, "r");
-
     if (!f)
         die("rox: patch");
 
@@ -643,8 +643,8 @@ static int apply(const char *name)
             continue;
 
         char path[P];
-        size_t ac, dc, mc;
-        int simple;
+        size_t ac = 0, dc = 0, mc = 0;
+        int simple = 0;
 
         if (!parse_header(s, path, &ac, &dc, &mc, &simple) ||
             !safe(path)) {
@@ -665,6 +665,7 @@ static int apply(const char *name)
         size_t got_add = 0;
         size_t got_del = 0;
         size_t got_mod = 0;
+        size_t got_context = 0;
 
         char **old = lines(path, &oldn);
         char **out = NULL;
@@ -746,6 +747,7 @@ static int apply(const char *name)
                     exit(1);
 
                 out[outn++] = strdup(old[pos++]);
+                got_context++;
                 continue;
             }
 
@@ -753,8 +755,8 @@ static int apply(const char *name)
             goto filebad;
         }
 
-        if (!closed || pos != oldn) {
-            fprintf(stderr, "rox: incomplete patch: %s\n", path);
+        if (!closed) {
+            fprintf(stderr, "rox: missing closing ^^^ marker: %s\n", path);
             goto filebad;
         }
 
@@ -768,10 +770,48 @@ static int apply(const char *name)
             goto filebad;
         }
 
+        /*
+         * A patch containing only additions is treated as
+         * an append operation.
+         */
+        if (got_add && !got_del && !got_mod && !got_context && pos == 0) {
+            char **combined = malloc((oldn + outn) * sizeof *combined);
+
+            if (!combined)
+                exit(1);
+
+            for (size_t i = 0; i < oldn; i++)
+                combined[i] = old[i];
+
+            for (size_t i = 0; i < outn; i++)
+                combined[oldn + i] = out[i];
+
+            free(old);
+            free(out);
+
+            out = combined;
+            outn += oldn;
+            old = NULL;
+            oldn = 0;
+        } else {
+            /*
+             * Preserve unchanged original lines that the patch
+             * did not explicitly include.
+             */
+            while (pos < oldn) {
+                out = realloc(out, (outn + 1) * sizeof *out);
+                if (!out)
+                    exit(1);
+
+                out[outn++] = strdup(old[pos++]);
+            }
+        }
+
         {
             char tmp[P];
 
-            if (snprintf(tmp, sizeof tmp, "%s.rox-tmp", path) >= (int)sizeof tmp) {
+            if (snprintf(tmp, sizeof tmp, "%s.rox-tmp", path) >=
+                (int)sizeof tmp) {
                 fprintf(stderr, "rox: path too long\n");
                 goto filebad;
             }
@@ -782,7 +822,8 @@ static int apply(const char *name)
                 *slash = 0;
 
                 if (mkdirs(tmp)) {
-                    fprintf(stderr, "rox: cannot create parent directory\n");
+                    fprintf(stderr,
+                            "rox: cannot create parent directory\n");
                     goto filebad;
                 }
 
@@ -822,6 +863,7 @@ bad:
     free(s);
     return 1;
 }
+
 
 static void usage(void)
 {
