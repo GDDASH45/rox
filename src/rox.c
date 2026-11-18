@@ -543,9 +543,14 @@ static int status(void)
         return 1;
     }
 
-    char h[128];
+    char h[128], ref[P];
     head(h, sizeof h);
+    head_ref(ref, sizeof ref);
 
+    const char *branch_name = !strncmp(ref, "refs/heads/", 11)
+        ? ref + 11 : "(detached)";
+
+    printf("On branch %s\n", branch_name);
     printf("HEAD: %s\n", h[0] ? h : "(no commits)");
 
     FILE *f = fopen(META "/index", "r");
